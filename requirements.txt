@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+openai
+langchain
+langchain-community
+langchain-openai
+supabase
+pymupdf
+python-multipart
+python-dotenv
