@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from app.models.chat import ChatRequest, ChatResponse
 from app.services.rag_service import run_rag_pipeline
 from app.database import supabase
+from app.routers.documents import get_allowed_groups  # 💡 문서 권한 함수 재사용
 import uuid
 
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -9,49 +10,66 @@ router = APIRouter(prefix="/api", tags=["chat"])
 @router.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(req: ChatRequest):
     try:
-        # 1. 세션 ID 검증 및 생성
         session_id = getattr(req, "session_id", None)
+        user_id = getattr(req, "user_id", None)
         
-        if not session_id:
-            session_id = str(uuid.uuid4())
-            session_data = {
-                "id": session_id,
-                "title": req.message[:20] if req.message else "새 대화"
-            }
-            supabase.table("chat_sessions").insert(session_data).execute()
+        # 💡 documents.py와 동일한 검증된 권한 로직 적용
+        allowed_groups = get_allowed_groups(user_id)
+        print(f"💬 [Chat 요청] user_id: '{user_id}' | 허용 권한 그룹: {allowed_groups}")
 
-        # 2. RAG 파이프라인 실행
-        allowed_groups = ["common", "admin"]
+        # RAG 파이프라인 동적으로 동기화된 allowed_groups 전달
         rag_response = await run_rag_pipeline(req, allowed_groups)
 
-        # 3. 유저 질문 & AI 답변 기록 저장 (role 필수 전달)
-        try:
-            messages_to_insert = [
-                {
-                    "session_id": session_id,
-                    "role": "user",
-                    "content": req.message
-                },
-                {
-                    "session_id": session_id,
-                    "role": "assistant",
-                    "content": rag_response.answer
-                }
-            ]
-            supabase.table("chat_messages").insert(messages_to_insert).execute()
-            print(f"✅ [chat_messages 저장 성공] session_id: {session_id}")
-        except Exception as msg_err:
-            print(f"❌ [chat_messages 저장 실패]: {msg_err}")
+        # 2-1. 미답변 질문 판별 및 태그 제거
+        answer_text = getattr(rag_response, "answer", "") or ""
+        sources = getattr(rag_response, "sources", [])
 
-        # 4. 세션 목록 최신화 (updated_at 갱신)
-        try:
+        # [UNANSWERED] 태그 존재 여부 또는 sources 비어있는지 확인
+        is_unanswered = ("[UNANSWERED]" in answer_text) or (len(sources) == 0)
+
+        # [UNANSWERED] 태그 제거 및 정제
+        cleaned_answer = answer_text.replace("[UNANSWERED]", "").lstrip(" :").strip()
+
+        # 미답변인 경우 엉뚱하게 조회된 sources 목록 초기화
+        if is_unanswered:
+            sources = []
+            rag_response.sources = []
+
+        # ★ [핵심] answer뿐만 아니라 reply 필드도 정제된 텍스트로 업데이트
+        rag_response.answer = cleaned_answer
+        if hasattr(rag_response, "reply"):
+            rag_response.reply = cleaned_answer
+
+        rag_response.unanswered = is_unanswered 
+
+        # 3. 미답변 질문 DB 저장
+        if is_unanswered:
+            try:
+                unanswered_data = {
+                    "question": req.message,
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "status": "open",
+                    "note": ""
+                }
+                supabase.table("unanswered_queries").insert(unanswered_data).execute()
+                print(f"✅ [미답변 질문 DB 저장 성공]: {req.message}")
+            except Exception as unans_err:
+                print(f"❌ [미답변 질문 DB 저장 실패]: {unans_err}")
+
+        # 4. 메시지 저장 (태그가 제거된 cleaned_answer 적용)
+        messages_to_insert = [
+            {"session_id": session_id, "role": "user", "content": req.message},
+            {"session_id": session_id, "role": "assistant", "content": cleaned_answer}
+        ]
+        supabase.table("chat_messages").insert(messages_to_insert).execute()
+
+        # 5. 세션 updated_at 갱신
+        if session_id:
             supabase.table("chat_sessions").update({
                 "updated_at": "now()"
             }).eq("id", session_id).execute()
-        except Exception:
-            pass
 
-        # 프론트엔드로 session_id 전달
         rag_response.session_id = session_id
         return rag_response
 

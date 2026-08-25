@@ -17,3 +17,4 @@ class ChatResponse(BaseModel):
     reply: str
     sources: List[SourceDocument] = []
     session_id: Optional[str] = None
+    unanswered: bool = False
