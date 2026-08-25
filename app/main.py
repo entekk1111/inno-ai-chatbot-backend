@@ -1,6 +1,6 @@
 import os
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
@@ -23,6 +23,33 @@ app = FastAPI(
     title="Multi-User Shared RAG Backend with Supabase",
     version="1.0.0"
 )
+
+# ---------------------------------------------------------
+# [디버깅 미들웨어 추가] /api/sessions 요청 헤더 및 파라미터 로깅
+# ---------------------------------------------------------
+@app.middleware("http")
+async def log_session_requests(request: Request, call_next):
+    if "/api/sessions" in request.url.path:
+        print("\n==================== [API DEBUG START] ====================")
+        print(f"1. [Method & Path]: {request.method} {request.url.path}")
+        print(f"2. [Query Params]: {dict(request.query_params)}")
+        
+        # Authorization 헤더 추출
+        auth_header = request.headers.get("authorization")
+        print(f"3. [Authorization Header]: '{auth_header}'")
+        
+        # 전체 요청 헤더 확인
+        print(f"4. [All Request Headers]: {dict(request.headers)}")
+        print("===========================================================\n")
+
+    response = await call_next(request)
+    
+    if "/api/sessions" in request.url.path:
+        print(f"5. [Response Status Code]: {response.status_code}")
+        print("==================== [API DEBUG END] ====================\n")
+        
+    return response
+# ---------------------------------------------------------
 
 # 4. CORS 미들웨어 설정
 app.add_middleware(

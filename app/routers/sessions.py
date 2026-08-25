@@ -1,16 +1,16 @@
-from fastapi import APIRouter, HTTPException, Query, status
-from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends, status
+from typing import Dict, Any
 from app.database import supabase
+from app.security import get_current_user  # 👈 JWT 토큰에서 user_id를 자동 추출하는 의존성
 
 router = APIRouter(prefix="/api", tags=["Sessions"])
 
-# 1. 세션 목록 조회 API (user_id 필수 필터링)
+
+# 1. 세션 목록 조회 API
 @router.get("/sessions")
-async def get_sessions(user_id: Optional[str] = Query(None)):
+async def get_sessions(current_user: Dict[str, Any] = Depends(get_current_user)):
     try:
-        # user_id가 없거나 빈 값인 경우 서버에서 빈 목록 반환 (보안 보장)
-        if not user_id:
-            return {"sessions": []}
+        user_id = current_user.get("user_id")
 
         response = supabase.table("chat_sessions") \
             .select("id, title, updated_at") \
@@ -31,15 +31,14 @@ async def get_sessions(user_id: Optional[str] = Query(None)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# 2. 특정 세션 메시지 기록 조회 API (소유권 검증)
+# 2. 특정 세션 메시지 기록 조회 API
 @router.get("/sessions/{session_id}")
-async def get_session_history(session_id: str, user_id: Optional[str] = Query(None)):
+async def get_session_history(
+    session_id: str, 
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
     try:
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="user_id가 필요합니다."
-            )
+        user_id = current_user.get("user_id")
 
         # 1) 세션 존재 여부 및 소유자 확인
         session_res = supabase.table("chat_sessions") \
@@ -76,15 +75,14 @@ async def get_session_history(session_id: str, user_id: Optional[str] = Query(No
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# 3. 단일 세션 삭제 API (소유자만 삭제 가능)
+# 3. 단일 세션 삭제 API
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_200_OK)
-async def delete_session(session_id: str, user_id: Optional[str] = Query(None)):
+async def delete_session(
+    session_id: str, 
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
     try:
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="user_id가 필요합니다."
-            )
+        user_id = current_user.get("user_id")
 
         # 1) 세션 소유자 확인
         session_res = supabase.table("chat_sessions") \
@@ -117,15 +115,11 @@ async def delete_session(session_id: str, user_id: Optional[str] = Query(None)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# 4. 특정 사용자의 전체 세션 삭제 API (user_id 해당 세션만 전체 삭제)
+# 4. 특정 사용자의 전체 세션 삭제 API
 @router.delete("/sessions", status_code=status.HTTP_200_OK)
-async def delete_all_sessions(user_id: Optional[str] = Query(None)):
+async def delete_all_sessions(current_user: Dict[str, Any] = Depends(get_current_user)):
     try:
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="user_id가 필요합니다."
-            )
+        user_id = current_user.get("user_id")
 
         # 1) 해당 사용자의 세션 ID 목록 추출
         user_sessions_res = supabase.table("chat_sessions") \
