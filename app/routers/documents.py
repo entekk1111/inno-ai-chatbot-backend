@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query, Request
 from typing import Optional, List
 from app.database import supabase
 from app.models.document import PermissionUpdateRequest
@@ -46,6 +46,7 @@ def get_allowed_groups(user_id: Optional[str] = None) -> List[str]:
 
     return allowed_groups
 
+
 # 1. 문서 목록 조회
 @router.get("")
 async def get_documents(user_id: Optional[str] = Query(None)):
@@ -71,7 +72,8 @@ async def get_documents(user_id: Optional[str] = Query(None)):
     print(f"📦 [get_documents] 실제 반환 문서 개수: {len(docs)}")
     return docs
 
-# 3. 문서 업로드 (access_group 기본값 및 디버깅 로그 추가)
+
+# 2. 문서 업로드 (access_group 기본값 및 디버깅 로그 추가)
 @router.post("")
 async def upload_document(
     file: UploadFile = File(...),
@@ -86,6 +88,36 @@ async def upload_document(
     print(f"✅ [upload_document] 업로드 완료 - 생성된 ID: {doc_id}")
     return {"ok": True, "document_id": doc_id, "message": "문서 업로드 완료"}
 
+
+# 3. 문서 정보/권한 수정 (PATCH - 누락되었던 엔드포인트 추가)
+@router.patch("/{document_id}")
+async def update_document(
+    document_id: str,
+    request: Request
+):
+    try:
+        print(f"✏️ [update_document] 수정 요청 document_id: {document_id}")
+        
+        # 프론트엔드에서 전송된 JSON 바디 수신
+        body_data = await request.json()
+        print(f"📝 [update_document] 수신 데이터: {body_data}")
+
+        if not body_data:
+            return {"ok": True, "message": "수정할 항목이 없습니다."}
+
+        # Supabase DB 업데이트
+        res = supabase.table("chat_documents") \
+            .update(body_data) \
+            .eq("id", document_id) \
+            .execute()
+
+        return {"ok": True, "message": "문서 정보가 성공적으로 수정되었습니다.", "data": res.data}
+    except Exception as e:
+        print(f"❌ [update_document 오류]: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# 4. 문서 삭제 (DELETE)
 @router.delete("/{document_id}")
 async def delete_document(document_id: str):
     try:
@@ -113,4 +145,3 @@ async def delete_document(document_id: str):
     except Exception as e:
         print(f"❌ [delete_document 오류]: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-        
